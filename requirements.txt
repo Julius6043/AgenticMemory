@@ -23,6 +23,33 @@ bert-score>=0.3.13
 tqdm>=4.66.1
 pandas>=2.2.3
 python-dotenv>=1.0.1
+hf_xet
 
 # Note: pathlib is included in Python 3.4+ standard library
 # Note: CUDA support is integrated into PyTorch, no separate package needed
+
+# Additional requirements for the Flask API
+flask>=2.3.0
+flask-cors>=4.0.0
+gunicorn>=21.0.0  # For production deployment
+
+
+# Supabase Integration Requirements for AgenticMemory
+
+# Core Supabase client
+supabase>=2.3.0
+
+# PostgreSQL adapter (required by Supabase)
+psycopg2-binary>=2.9.0
+
+# Vector operations (if using direct PostgreSQL access)
+pgvector>=0.2.0
+
+# Additional dependencies for enhanced functionality
+python-dotenv>=1.0.0  # For loading .env files
+asyncpg>=0.29.0       # Async PostgreSQL driver (optional)
+sqlalchemy>=2.0.0     # SQL toolkit (optional, for advanced queries)
+
+# Data manipulation and analysis
+pandas>=2.0.0         # For data analysis (optional)
+numpy>=1.24.0         # Already required by sentence-transformers

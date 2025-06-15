@@ -39,6 +39,7 @@ Our project introduces an innovative **Agentic Memory** system that revolutioniz
 ## How It Works 🛠️
 
 When a new memory is added to the system:
+
 1. Generates comprehensive notes with structured attributes
 2. Creates contextual descriptions and tags
 3. Analyzes historical memories for relevant connections
@@ -52,13 +53,15 @@ Empirical experiments conducted on six foundation models demonstrate superior pe
 ## Getting Started 🚀
 
 1. Clone the repository:
+
 ```bash
 git clone https://github.com/WujiangXu/AgenticMemory.git
 cd AgenticMemory
 ```
 
 2. Install dependencies:
-Option 1: Using venv (Python virtual environment)
+   Option 1: Using venv (Python virtual environment)
+
 ```bash
 # Create and activate virtual environment
 python -m venv a-mem
@@ -70,6 +73,7 @@ pip install -r requirements.txt
 ```
 
 Option 2: Using Conda
+
 ```bash
 # Create and activate conda environment
 conda create -n myenv python=3.9
@@ -80,9 +84,35 @@ pip install -r requirements.txt
 ```
 
 3. Run the experiments in LoCoMo dataset:
+
 ```python
-python test_advanced.py 
+python test_advanced.py
 ```
+
+## ☁️ Supabase Integration (NEW!)
+
+AgenticMemory now supports **Supabase** as a persistent, scalable backend! This integration provides:
+
+- **🏗️ Persistent Storage**: Your memories survive across sessions
+- **👥 Multi-User Support**: Isolated memory spaces for different users
+- **🔍 Vector Search**: Advanced semantic search using pgvector
+- **💬 Chat API**: RESTful API for frontend integration
+- **📊 Analytics**: Real-time statistics and insights
+- **🌐 Cloud-Ready**: Scalable cloud infrastructure
+
+### Quick Start with Supabase
+
+```bash
+# 1. Set up Supabase integration
+python setup_supabase.py
+
+# 2. Start the API server
+python start_supabase.py
+
+# 3. Open the demo at http://localhost:5000/demo
+```
+
+For detailed instructions, see [SUPABASE_INTEGRATION.md](SUPABASE_INTEGRATION.md).
 
 ## Citation 📚
 
@@ -100,5 +130,3 @@ If you use this code in your research, please cite our work:
 ## License 📄
 
 This project is licensed under the MIT License. See LICENSE for details.
-
-

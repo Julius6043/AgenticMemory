@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgenticMemory Chat Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            gap: 1rem;
+            padding: 1rem;
+        }
+
+        .chat-section {
+            flex: 2;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 120px);
+        }
+
+        .sidebar {
+            flex: 1;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 1rem;
+            height: calc(100vh - 120px);
+            overflow-y: auto;
+        }
+
+        .messages {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            border-bottom: 1px solid #eee;
+        }
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            border-radius: 8px;
+            max-width: 80%;
+        }
+
+        .message.user {
+            background-color: #3498db;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .message.agent {
+            background-color: #ecf0f1;
+            color: #2c3e50;
+        }
+
+        .message.system {
+            background-color: #f39c12;
+            color: white;
+            font-style: italic;
+            text-align: center;
+            margin: 0 auto;
+        }
+
+        .input-area {
+            padding: 1rem;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .input-area input {
+            flex: 1;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .input-area button {
+            padding: 0.75rem 1.5rem;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .input-area button:hover {
+            background-color: #2980b9;
+        }
+
+        .input-area button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .sidebar h3 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 0.5rem;
+        }
+
+        .stats {
+            background-color: #ecf0f1;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+
+        .stats-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+
+        .search-section {
+            margin-bottom: 1rem;
+        }
+
+        .search-section input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+
+        .search-section button {
+            width: 100%;
+            padding: 0.5rem;
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .search-results {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .memory-item {
+            background-color: #f8f9fa;
+            padding: 0.5rem;
+            margin-bottom: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .memory-item strong {
+            color: #2c3e50;
+        }
+
+        .status {
+            text-align: center;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+            border-radius: 4px;
+        }
+
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧠 AgenticMemory Chat Demo</h1>
+        <p>Intelligenter Chat-Agent mit persistentem Gedächtnis</p>
+    </div>
+
+    <div class="container">
+        <div class="chat-section">
+            <div id="status" class="status">Verbindung wird hergestellt...</div>
+            <div id="messages" class="messages"></div>
+            <div class="input-area">
+                <input type="text" id="messageInput" placeholder="Nachricht eingeben..." disabled>
+                <button id="sendButton" disabled>Senden</button>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <h3>📊 Statistiken</h3>
+            <div id="stats" class="stats">
+                <div class="stats-item">
+                    <span>Status:</span>
+                    <span id="connectionStatus">Wird geladen...</span>
+                </div>
+                <div class="stats-item">
+                    <span>Gesamt Erinnerungen:</span>
+                    <span id="totalMemories">-</span>
+                </div>
+                <div class="stats-item">
+                    <span>Session ID:</span>
+                    <span id="sessionId">-</span>
+                </div>
+            </div>
+
+            <h3>🔍 Erinnerungen durchsuchen</h3>
+            <div class="search-section">
+                <input type="text" id="searchInput" placeholder="Suche nach Erinnerungen...">
+                <button id="searchButton">Suchen</button>
+            </div>
+            <div id="searchResults" class="search-results"></div>
+
+            <h3>➕ Erinnerung hinzufügen</h3>
+            <div class="search-section">
+                <input type="text" id="memoryContent" placeholder="Neue Erinnerung...">
+                <input type="text" id="memoryContext" placeholder="Kontext (optional)">
+                <button id="addMemoryButton">Hinzufügen</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class AgenticMemoryClient {
+            constructor(baseUrl = 'http://localhost:5000') {
+                this.baseUrl = baseUrl;
+                this.sessionId = null;
+            }
+
+            async sendMessage(message) {
+                const response = await fetch(`${this.baseUrl}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: this.sessionId
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                this.sessionId = data.session_id;
+                return data;
+            }
+
+            async searchMemories(query, k = 5) {
+                const response = await fetch(`${this.baseUrl}/memory/search`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        k: k
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return await response.json();
+            }
+
+            async addMemory(content, context = 'User Added', category = 'Manual') {
+                const response = await fetch(`${this.baseUrl}/memory/add`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: content,
+                        context: context,
+                        category: category
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return await response.json();
+            }
+
+            async getStats() {
+                const response = await fetch(`${this.baseUrl}/memory/stats`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return await response.json();
+            }
+
+            async healthCheck() {
+                const response = await fetch(`${this.baseUrl}/health`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return await response.json();
+            }
+        }
+
+        // Global variables
+        const client = new AgenticMemoryClient();
+        let isConnected = false;
+
+        // DOM elements
+        const statusEl = document.getElementById('status');
+        const messagesEl = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const connectionStatusEl = document.getElementById('connectionStatus');
+        const totalMemoriesEl = document.getElementById('totalMemories');
+        const sessionIdEl = document.getElementById('sessionId');
+        const searchInput = document.getElementById('searchInput');
+        const searchButton = document.getElementById('searchButton');
+        const searchResults = document.getElementById('searchResults');
+        const memoryContent = document.getElementById('memoryContent');
+        const memoryContext = document.getElementById('memoryContext');
+        const addMemoryButton = document.getElementById('addMemoryButton');
+
+        // Initialize app
+        async function initialize() {
+            try {
+                const health = await client.healthCheck();
+                if (health.memory_system_active) {
+                    setConnected(true);
+                    await updateStats();
+                    addMessage('system', 'Verbindung hergestellt! Sie können jetzt mit dem Agent chatten.');
+                } else {
+                    setConnected(false, 'Memory-System nicht aktiv');
+                }
+            } catch (error) {
+                setConnected(false, `Verbindungsfehler: ${error.message}`);
+            }
+        }
+
+        function setConnected(connected, errorMessage = '') {
+            isConnected = connected;
+            if (connected) {
+                statusEl.className = 'status connected';
+                statusEl.textContent = '✅ Verbunden';
+                connectionStatusEl.textContent = 'Verbunden';
+                messageInput.disabled = false;
+                sendButton.disabled = false;
+            } else {
+                statusEl.className = 'status error';
+                statusEl.textContent = `❌ ${errorMessage || 'Nicht verbunden'}`;
+                connectionStatusEl.textContent = 'Nicht verbunden';
+                messageInput.disabled = true;
+                sendButton.disabled = true;
+            }
+        }
+
+        function addMessage(sender, text, isLoading = false) {
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${sender}`;
+            
+            if (isLoading) {
+                messageEl.innerHTML = `${text} <div class="loading"></div>`;
+            } else {
+                messageEl.textContent = text;
+            }
+            
+            messagesEl.appendChild(messageEl);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            
+            return messageEl;
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || !isConnected) return;
+
+            // Add user message
+            addMessage('user', message);
+            messageInput.value = '';
+            sendButton.disabled = true;
+
+            // Add loading message
+            const loadingEl = addMessage('agent', 'Denkt nach...', true);
+
+            try {
+                const response = await client.sendMessage(message);
+                
+                // Remove loading message
+                loadingEl.remove();
+                
+                // Add agent response
+                addMessage('agent', response.response);
+                
+                // Update session info
+                sessionIdEl.textContent = response.session_id.substring(0, 8) + '...';
+                
+                // Update stats
+                await updateStats();
+                
+            } catch (error) {
+                // Remove loading message
+                loadingEl.remove();
+                addMessage('system', `Fehler: ${error.message}`);
+            }
+
+            sendButton.disabled = false;
+        }
+
+        async function searchMemories() {
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            try {
+                const response = await client.searchMemories(query);
+                displaySearchResults(response.results);
+            } catch (error) {
+                searchResults.innerHTML = `<div class="memory-item" style="color: red;">Fehler: ${error.message}</div>`;
+            }
+        }
+
+        function displaySearchResults(results) {
+            if (results.length === 0) {
+                searchResults.innerHTML = '<div class="memory-item">Keine Erinnerungen gefunden.</div>';
+                return;
+            }
+
+            searchResults.innerHTML = '';
+            results.forEach(memory => {
+                const memoryEl = document.createElement('div');
+                memoryEl.className = 'memory-item';
+                memoryEl.innerHTML = `
+                    <strong>${memory.context}</strong><br>
+                    ${memory.content.substring(0, 100)}${memory.content.length > 100 ? '...' : ''}<br>
+                    <small>Keywords: ${memory.keywords.join(', ')}</small>
+                `;
+                searchResults.appendChild(memoryEl);
+            });
+        }
+
+        async function addMemoryManually() {
+            const content = memoryContent.value.trim();
+            if (!content) return;
+
+            const context = memoryContext.value.trim() || 'User Added';
+
+            try {
+                await client.addMemory(content, context);
+                memoryContent.value = '';
+                memoryContext.value = '';
+                addMessage('system', 'Erinnerung hinzugefügt!');
+                await updateStats();
+            } catch (error) {
+                addMessage('system', `Fehler beim Hinzufügen: ${error.message}`);
+            }
+        }
+
+        async function updateStats() {
+            try {
+                const stats = await client.getStats();
+                totalMemoriesEl.textContent = stats.total_memories;
+            } catch (error) {
+                console.error('Error updating stats:', error);
+            }
+        }
+
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        searchButton.addEventListener('click', searchMemories);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchMemories();
+        });
+
+        addMemoryButton.addEventListener('click', addMemoryManually);
+        memoryContent.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addMemoryManually();
+        });
+
+        // Initialize when page loads
+        window.addEventListener('load', initialize);
+    </script>
+</body>
+</html>

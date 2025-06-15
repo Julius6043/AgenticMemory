@@ -1,4 +1,4 @@
-from memory_layer import LLMController, AgenticMemorySystem
+from basic_version.memory_layer import LLMController, AgenticMemorySystem
 import os
 import json
 import argparse
@@ -17,7 +17,7 @@ from collections import defaultdict
 import pickle
 import random
 from tqdm import tqdm
-from test_utils import calculate_metrics, aggregate_metrics
+from basic_version.test_utils import calculate_metrics, aggregate_metrics
 from datetime import datetime
 
 # Download required NLTK data
