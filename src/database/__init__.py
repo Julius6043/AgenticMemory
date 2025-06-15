@@ -25,12 +25,15 @@ Usage:
 """
 
 # Core exports
-from .supabase_client import SupabaseMemoryClient
-from .supabase_memory_adapter import SupabaseAgenticMemorySystem, SupabaseMemoryNote
-from .supabase_config import SupabaseConfigManager, SupabaseConfig
+from src.database.supabase_client import SupabaseMemoryClient
+from src.database.supabase_memory_adapter import (
+    SupabaseAgenticMemorySystem,
+    SupabaseMemoryNote,
+)
+from src.database.supabase_config import SupabaseConfigManager, SupabaseConfig
 
 # Utility exports
-from .supabase_utils import (
+from src.database.supabase_utils import (
     SupabaseMigrationTool,
     SupabaseMaintenanceTool,
     SupabaseBackupTool,

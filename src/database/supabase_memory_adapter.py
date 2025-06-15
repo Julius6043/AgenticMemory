@@ -18,9 +18,9 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from memory import MemoryNote, AgenticMemorySystem
-from retrievers import SimpleEmbeddingRetriever
-from llm_controllers import LLMController
+from src.memory import MemoryNote, AgenticMemorySystem
+from src.retrievers import SimpleEmbeddingRetriever
+from src.llm_controllers import LLMController
 from sentence_transformers import SentenceTransformer
 
 # Import Supabase components

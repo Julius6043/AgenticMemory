@@ -10,8 +10,8 @@ import json
 import uuid
 from datetime import datetime
 
-from .llm_controllers import LLMController
-from .retrievers import SimpleEmbeddingRetriever
+from src.llm_controllers import LLMController
+from src.retrievers import SimpleEmbeddingRetriever
 
 
 class MemoryNote:
