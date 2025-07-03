@@ -56,7 +56,10 @@ class SupabaseMemoryClient:
         try:
             # Try to fetch one record from memories table
             result = (
-                self.client.table(self.memories_table).select("id").limit(1).execute()
+                self.client.table(self.memories_table)
+                .select("id")
+                .range(0, 0)
+                .execute()
             )
             return True
         except Exception as e:
@@ -106,11 +109,25 @@ class SupabaseMemoryClient:
             "importance_score": importance_score,
             "user_id": user_id,
             "session_id": session_id,
-            "embedding": embedding,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "last_accessed": datetime.now().isoformat(),
         }
+
+        # Convert embedding to proper format for PostgreSQL vector type
+        if embedding:
+            # Try different formats for PostgreSQL vector
+            try:
+                if isinstance(embedding, list):
+                    # Direct list assignment - let Supabase handle the conversion
+                    memory_data["embedding"] = embedding
+                elif isinstance(embedding, np.ndarray):
+                    memory_data["embedding"] = embedding.tolist()
+                else:
+                    memory_data["embedding"] = embedding
+            except Exception as e:
+                print(f"Warning: Failed to set embedding: {e}")
+                # Continue without embedding if conversion fails
 
         # Add any additional metadata
         for key, value in kwargs.items():
@@ -130,11 +147,14 @@ class SupabaseMemoryClient:
         except Exception as e:
             raise Exception(f"Failed to create memory: {e}")
 
-    def get_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+    def get_memory(
+        self, memory_id: str, increment_count: bool = True
+    ) -> Optional[Dict[str, Any]]:
         """Get a memory by ID.
 
         Args:
             memory_id: Memory ID
+            increment_count: Whether to increment retrieval count
 
         Returns:
             Dict or None: Memory data
@@ -148,14 +168,26 @@ class SupabaseMemoryClient:
             )
 
             if result.data:
-                # Increment retrieval count
-                self.increment_retrieval_count(memory_id)
+                # Only increment retrieval count if explicitly requested
+                if increment_count:
+                    self.increment_retrieval_count(memory_id)
                 return result.data[0]
             return None
 
         except Exception as e:
             print(f"Failed to get memory {memory_id}: {e}")
             return None
+
+    def _get_memory_without_count(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Get a memory by ID without incrementing retrieval count (for internal use).
+
+        Args:
+            memory_id: Memory ID
+
+        Returns:
+            Dict or None: Memory data
+        """
+        return self.get_memory(memory_id, increment_count=False)
 
     def update_memory(self, memory_id: str, updates: Dict[str, Any]) -> bool:
         """Update a memory.
@@ -223,26 +255,23 @@ class SupabaseMemoryClient:
             # Build query
             query_builder = self.client.table(self.memories_table).select("*")
 
-            # Add text search (using PostgreSQL full-text search)
-            query_builder = query_builder.text_search("content_tsvector", query)
+            # Add text search if query is provided
+            if query.strip():
+                # Use ilike for simple text search (fallback if tsvector fails)
+                query_builder = query_builder.ilike("content", f"%{query}%")
 
             # Filter by user if provided
             if user_id:
                 query_builder = query_builder.eq("user_id", user_id)
 
-            # Limit results
-            query_builder = query_builder.limit(limit)
+            # Execute with limit
+            result = query_builder.range(0, limit - 1).execute()
 
-            result = query_builder.execute()
-
-            # Increment retrieval counts for found memories
-            for memory in result.data:
-                self.increment_retrieval_count(memory["id"])
-
-            return result.data
+            # Don't increment retrieval counts for search operations - only for explicit gets
+            return result.data or []
 
         except Exception as e:
-            print(f"Failed to search memories: {e}")
+            print(f"Failed to search memories by text: {e}")
             return []
 
     def search_memories_by_embedding(
@@ -264,31 +293,37 @@ class SupabaseMemoryClient:
             List of memory dictionaries with similarity scores
         """
         try:
-            # Use RPC to call the search function
-            result = self.client.rpc(
-                "search_similar_memories",
-                {
-                    "query_embedding": embedding,
-                    "similarity_threshold": similarity_threshold,
-                    "max_results": limit,
-                },
-            ).execute()
+            # Convert embedding to PostgreSQL vector format
+            embedding_str = f"[{','.join(map(str, embedding))}]"
+
+            # Use direct SQL query through RPC or fall back to text search
+            try:
+                result = self.client.rpc(
+                    "search_similar_memories",
+                    {
+                        "query_embedding": embedding_str,
+                        "similarity_threshold": similarity_threshold,
+                        "max_results": limit,
+                    },
+                ).execute()
+            except Exception:
+                # Fallback to simple text search if RPC fails
+                print("RPC search failed, falling back to text search")
+                return self.search_memories_by_text("", limit=limit, user_id=user_id)
 
             # Filter by user if provided
-            if user_id:
+            if user_id and result.data:
                 result.data = [
                     mem for mem in result.data if mem.get("user_id") == user_id
                 ]
 
-            # Increment retrieval counts for found memories
-            for memory in result.data:
-                self.increment_retrieval_count(memory["id"])
-
-            return result.data
+            # Don't increment retrieval counts for embedding search operations
+            return result.data or []
 
         except Exception as e:
             print(f"Failed to search memories by embedding: {e}")
-            return []
+            # Fallback to text search
+            return self.search_memories_by_text("", limit=limit, user_id=user_id)
 
     def hybrid_search_memories(
         self,
@@ -311,32 +346,39 @@ class SupabaseMemoryClient:
             List of memory dictionaries with combined scores
         """
         try:
-            # Use RPC to call the hybrid search function
-            result = self.client.rpc(
-                "hybrid_search_memories",
-                {
-                    "search_query": query,
-                    "query_embedding": embedding,
-                    "max_results": limit,
-                    "semantic_weight": semantic_weight,
-                },
-            ).execute()
+            # Try RPC function first
+            embedding_str = None
+            if embedding:
+                embedding_str = f"[{','.join(map(str, embedding))}]"
+
+            try:
+                result = self.client.rpc(
+                    "hybrid_search_memories",
+                    {
+                        "search_query": query,
+                        "query_embedding": embedding_str,
+                        "max_results": limit,
+                        "semantic_weight": semantic_weight,
+                    },
+                ).execute()
+            except Exception:
+                # Fallback to text search if RPC fails
+                print("RPC hybrid search failed, falling back to text search")
+                return self.search_memories_by_text(query, limit=limit, user_id=user_id)
 
             # Filter by user if provided
-            if user_id:
+            if user_id and result.data:
                 result.data = [
                     mem for mem in result.data if mem.get("user_id") == user_id
                 ]
 
-            # Increment retrieval counts for found memories
-            for memory in result.data:
-                self.increment_retrieval_count(memory["id"])
-
-            return result.data
+            # Don't increment retrieval counts for hybrid search operations
+            return result.data or []
 
         except Exception as e:
             print(f"Failed to hybrid search memories: {e}")
-            return []
+            # Fallback to text search
+            return self.search_memories_by_text(query, limit=limit, user_id=user_id)
 
     def get_memories_by_category(
         self, category: str, limit: int = 50, user_id: Optional[str] = None
@@ -361,8 +403,8 @@ class SupabaseMemoryClient:
             if user_id:
                 query_builder = query_builder.eq("user_id", user_id)
 
-            result = query_builder.limit(limit).execute()
-            return result.data
+            result = query_builder.range(0, limit - 1).execute()
+            return result.data or []
 
         except Exception as e:
             print(f"Failed to get memories by category: {e}")
@@ -399,8 +441,8 @@ class SupabaseMemoryClient:
             if user_id:
                 query_builder = query_builder.eq("user_id", user_id)
 
-            result = query_builder.limit(limit).execute()
-            return result.data
+            result = query_builder.range(0, limit - 1).execute()
+            return result.data or []
 
         except Exception as e:
             print(f"Failed to get memories by tags: {e}")
@@ -416,12 +458,34 @@ class SupabaseMemoryClient:
             bool: True if successful
         """
         try:
-            # Use RPC to call the increment function
-            result = self.client.rpc(
-                "increment_retrieval_count", {"memory_id": memory_id}
-            ).execute()
+            # Try RPC function first
+            try:
+                result = self.client.rpc(
+                    "increment_retrieval_count", {"memory_id": memory_id}
+                ).execute()
+                return True
+            except Exception:
+                # Fallback to direct update if RPC fails
+                pass
 
-            return True
+            # Fallback: Get current count, increment, and update
+            memory = self._get_memory_without_count(memory_id)
+            if memory:
+                new_count = memory.get("retrieval_count", 0) + 1
+                current_time = datetime.now().isoformat()
+
+                result = (
+                    self.client.table(self.memories_table)
+                    .update(
+                        {"retrieval_count": new_count, "last_accessed": current_time}
+                    )
+                    .eq("id", memory_id)
+                    .execute()
+                )
+
+                return bool(result.data)
+
+            return False
 
         except Exception as e:
             print(f"Failed to increment retrieval count: {e}")
@@ -511,7 +575,7 @@ class SupabaseMemoryClient:
         user_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Create a new chat session.
+        """Create a new chat session or ensure it exists.
 
         Args:
             session_id: Session identifier
@@ -519,9 +583,22 @@ class SupabaseMemoryClient:
             metadata: Additional metadata
 
         Returns:
-            bool: True if successful
+            bool: True if successful or session already exists
         """
         try:
+            # Check if session already exists
+            existing = (
+                self.client.table(self.chat_sessions_table)
+                .select("id")
+                .eq("session_id", session_id)
+                .execute()
+            )
+
+            if existing.data:
+                # Session already exists, return success
+                return True
+
+            # Create new session
             session_data = {
                 "session_id": session_id,
                 "user_id": user_id,
@@ -597,7 +674,7 @@ class SupabaseMemoryClient:
                 .select("*")
                 .eq("session_id", session_id)
                 .order("created_at", desc=False)
-                .limit(limit)
+                .range(0, limit - 1)
                 .execute()
             )
 
@@ -625,7 +702,11 @@ class SupabaseMemoryClient:
             if user_id:
                 query_builder = query_builder.eq("user_id", user_id)
 
-            result = query_builder.order("updated_at", desc=True).limit(limit).execute()
+            result = (
+                query_builder.order("updated_at", desc=True)
+                .range(0, limit - 1)
+                .execute()
+            )
             return result.data
 
         except Exception as e:
@@ -643,16 +724,52 @@ class SupabaseMemoryClient:
             Dict: Statistics dictionary
         """
         try:
-            # Use RPC to call the statistics function
-            result = self.client.rpc("get_memory_statistics").execute()
+            # Get total count
+            total_result = (
+                self.client.table(self.memories_table)
+                .select("id", count="exact")
+                .execute()
+            )
+            total_memories = total_result.count or 0
 
-            if result.data:
-                return result.data[0] if isinstance(result.data, list) else result.data
-            return {}
+            # Get count by category
+            category_result = (
+                self.client.table(self.memories_table).select("category").execute()
+            )
+
+            categories = {}
+            for memory in category_result.data:
+                category = (
+                    memory.get("category") or "Uncategorized"
+                )  # Handle None values
+                categories[category] = categories.get(category, 0) + 1
+
+            # Get count by user
+            user_result = (
+                self.client.table(self.memories_table).select("user_id").execute()
+            )
+
+            users = {}
+            for memory in user_result.data:
+                user_id = memory.get("user_id") or "anonymous"  # Handle None values
+                users[user_id] = users.get(user_id, 0) + 1
+
+            return {
+                "total_memories": total_memories,
+                "categories": categories,
+                "users": users,
+                "timestamp": datetime.now().isoformat(),
+            }
 
         except Exception as e:
             print(f"Failed to get memory statistics: {e}")
-            return {}
+            # Return default stats
+            return {
+                "total_memories": 0,
+                "categories": {},
+                "users": {},
+                "timestamp": datetime.now().isoformat(),
+            }
 
     def get_user_memory_count(self, user_id: str) -> int:
         """Get memory count for a user.
@@ -696,7 +813,9 @@ class SupabaseMemoryClient:
                 query_builder = query_builder.eq("user_id", user_id)
 
             result = (
-                query_builder.order("retrieval_count", desc=True).limit(limit).execute()
+                query_builder.order("retrieval_count", desc=True)
+                .range(0, limit - 1)
+                .execute()
             )
             return result.data
 

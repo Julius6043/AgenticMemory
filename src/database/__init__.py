@@ -12,28 +12,28 @@ Key Components:
 
 Usage:
     # Basic usage with Supabase backend
-    from src.database import get_supabase_memory_system
+    from .database import get_supabase_memory_system
 
     memory_system = get_supabase_memory_system("user123")
     memory_id = memory_system.add_note("Remember this important fact")
 
     # Direct client access for advanced operations
-    from src.database import SupabaseMemoryClient
+    from .database import SupabaseMemoryClient
 
     client = SupabaseMemoryClient()
     results = client.hybrid_search_memories("search query", embedding=embedding)
 """
 
 # Core exports
-from src.database.supabase_client import SupabaseMemoryClient
-from src.database.supabase_memory_adapter import (
+from .supabase_client import SupabaseMemoryClient
+from .supabase_memory_adapter import (
     SupabaseAgenticMemorySystem,
     SupabaseMemoryNote,
 )
-from src.database.supabase_config import SupabaseConfigManager, SupabaseConfig
+from .supabase_config import SupabaseConfigManager, SupabaseConfig
 
 # Utility exports
-from src.database.supabase_utils import (
+from .supabase_utils import (
     SupabaseMigrationTool,
     SupabaseMaintenanceTool,
     SupabaseBackupTool,

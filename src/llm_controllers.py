@@ -17,9 +17,9 @@ class BaseLLMController(ABC):
 
     @abstractmethod
     def get_completion(
-        self, prompt: str, response_format: dict, temperature: float = 0.7
+        self, prompt: str, response_format: dict = None, temperature: float = 0.7
     ) -> str:
-        """Get completion from LLM with structured response format."""
+        """Get completion from LLM with optional structured response format."""
         pass
 
 
@@ -50,19 +50,32 @@ class OpenAIController(BaseLLMController):
             )
 
     def get_completion(
-        self, prompt: str, response_format: dict, temperature: float = 0.7
+        self, prompt: str, response_format: dict = None, temperature: float = 0.7
     ) -> str:
-        """Get completion from OpenAI API with structured JSON response."""
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "You must respond with a JSON object."},
-                {"role": "user", "content": prompt},
-            ],
-            response_format=response_format,
-            temperature=temperature,
-            max_tokens=1000,
-        )
+        """Get completion from OpenAI API with optional structured JSON response."""
+        if response_format is None:
+            # Simple text completion
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=1000,
+            )
+        else:
+            # Structured JSON completion
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You must respond with a JSON object.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                response_format=response_format,
+                temperature=temperature,
+                max_tokens=1000,
+            )
         return response.choices[0].message.content
 
 
@@ -108,26 +121,39 @@ class OllamaController(BaseLLMController):
         return result
 
     def get_completion(
-        self, prompt: str, response_format: dict, temperature: float = 0.7
+        self, prompt: str, response_format: dict = None, temperature: float = 0.7
     ) -> str:
-        """Get completion from Ollama with fallback to empty response."""
-        try:
-            response = completion(
-                model=f"ollama_chat/{self.model}",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You must respond with a JSON object.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                response_format=response_format,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            # Fallback to empty response if model fails
-            empty_response = self._generate_empty_response(response_format)
-            return json.dumps(empty_response)
+        """Get completion from Ollama with optional structured response format."""
+        if response_format is None:
+            # Simple text completion
+            try:
+                response = completion(
+                    model=f"ollama_chat/{self.model}",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                return f"Error: {str(e)}"
+        else:
+            # Structured JSON completion with fallback
+            try:
+                response = completion(
+                    model=f"ollama_chat/{self.model}",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You must respond with a JSON object.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    response_format=response_format,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                # Fallback to empty response if model fails
+                empty_response = self._generate_empty_response(response_format)
+                return json.dumps(empty_response)
 
 
 class LLMController:
@@ -152,3 +178,18 @@ class LLMController:
             self.llm = OllamaController(model)
         else:
             raise ValueError("Backend must be either 'openai' or 'ollama'")
+
+    def get_completion(
+        self, prompt: str, response_format: dict = None, temperature: float = 0.7
+    ) -> str:
+        """Get completion from the underlying LLM backend.
+
+        Args:
+            prompt: The prompt to send to the LLM
+            response_format: The expected response format (optional for simple text)
+            temperature: Temperature for response generation
+
+        Returns:
+            str: The LLM response
+        """
+        return self.llm.get_completion(prompt, response_format, temperature)

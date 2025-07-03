@@ -15,7 +15,7 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from .utils import simple_tokenize
+from src.utils import simple_tokenize
 
 
 class HybridRetriever:

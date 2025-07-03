@@ -18,14 +18,19 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 from src.memory import MemoryNote, AgenticMemorySystem
 from src.retrievers import SimpleEmbeddingRetriever
 from src.llm_controllers import LLMController
 from sentence_transformers import SentenceTransformer
 
 # Import Supabase components
-from .supabase_client import SupabaseMemoryClient
-from .supabase_config import SupabaseConfigManager
+from src.database.supabase_client import SupabaseMemoryClient
+from src.database.supabase_config import SupabaseConfigManager
 
 
 class SupabaseMemoryNote(MemoryNote):
@@ -233,6 +238,22 @@ class SupabaseAgenticMemorySystem(AgenticMemorySystem):
         # Generate embedding
         embedding = self.embedding_model.encode([content])[0].tolist()
 
+        # Remove conflicting keys from kwargs
+        kwargs_clean = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in [
+                "content",
+                "embedding",
+                "context",
+                "category",
+                "keywords",
+                "tags",
+                "user_id",
+            ]
+        }
+
         # Create memory in Supabase
         memory_id = self.supabase_client.create_memory(
             content=content,
@@ -242,11 +263,11 @@ class SupabaseAgenticMemorySystem(AgenticMemorySystem):
             keywords=keywords,
             tags=tags,
             user_id=self.user_id,
-            **kwargs,
+            **kwargs_clean,
         )
 
-        # Load memory into cache
-        memory_data = self.supabase_client.get_memory(memory_id)
+        # Load memory into cache (without incrementing retrieval count since we just created it)
+        memory_data = self.supabase_client._get_memory_without_count(memory_id)
         if memory_data:
             memory_note = SupabaseMemoryNote(memory_data)
             self.memory_cache[memory_id] = memory_note
@@ -358,7 +379,7 @@ class SupabaseAgenticMemorySystem(AgenticMemorySystem):
                 neighbor_number=len(indices),
             )
 
-            response = self.llm_controller.llm.get_completion(
+            response = self.llm_controller.get_completion(
                 prompt_memory,
                 response_format={
                     "type": "json_schema",

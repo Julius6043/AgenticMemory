@@ -12,14 +12,17 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import numpy as np
 
-from .supabase_client import SupabaseMemoryClient
-from .supabase_memory_adapter import SupabaseMemoryNote, SupabaseAgenticMemorySystem
+from src.database.supabase_client import SupabaseMemoryClient
+from src.database.supabase_memory_adapter import (
+    SupabaseMemoryNote,
+    SupabaseAgenticMemorySystem,
+)
 
 # Import original memory system for migration
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from memory import MemoryNote, AgenticMemorySystem
+from src.memory import MemoryNote, AgenticMemorySystem
 
 
 class SupabaseMigrationTool:
