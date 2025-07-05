@@ -304,6 +304,7 @@ class SupabaseMemoryClient:
                         "query_embedding": embedding_str,
                         "similarity_threshold": similarity_threshold,
                         "max_results": limit,
+                        "filter_user_id": user_id,
                     },
                 ).execute()
             except Exception:
@@ -311,12 +312,7 @@ class SupabaseMemoryClient:
                 print("RPC search failed, falling back to text search")
                 return self.search_memories_by_text("", limit=limit, user_id=user_id)
 
-            # Filter by user if provided
-            if user_id and result.data:
-                result.data = [
-                    mem for mem in result.data if mem.get("user_id") == user_id
-                ]
-
+            # No need to filter by user anymore since it's done in SQL
             # Don't increment retrieval counts for embedding search operations
             return result.data or []
 
@@ -359,6 +355,7 @@ class SupabaseMemoryClient:
                         "query_embedding": embedding_str,
                         "max_results": limit,
                         "semantic_weight": semantic_weight,
+                        "filter_user_id": user_id,
                     },
                 ).execute()
             except Exception:
@@ -366,12 +363,7 @@ class SupabaseMemoryClient:
                 print("RPC hybrid search failed, falling back to text search")
                 return self.search_memories_by_text(query, limit=limit, user_id=user_id)
 
-            # Filter by user if provided
-            if user_id and result.data:
-                result.data = [
-                    mem for mem in result.data if mem.get("user_id") == user_id
-                ]
-
+            # No need to filter by user anymore since it's done in SQL
             # Don't increment retrieval counts for hybrid search operations
             return result.data or []
 

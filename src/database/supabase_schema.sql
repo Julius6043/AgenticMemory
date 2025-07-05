@@ -132,7 +132,8 @@ CREATE OR REPLACE FUNCTION search_similar_memories(
         query_embedding VECTOR(384),
         similarity_threshold FLOAT DEFAULT 0.5,
         max_results INTEGER DEFAULT 10,
-        exclude_memory_id UUID DEFAULT NULL
+        exclude_memory_id UUID DEFAULT NULL,
+        filter_user_id TEXT DEFAULT NULL
     ) RETURNS TABLE(
         id UUID,
         content TEXT,
@@ -160,6 +161,10 @@ WHERE m.embedding IS NOT NULL
         OR m.id != exclude_memory_id
     )
     AND (1 - (m.embedding <=> query_embedding)) >= similarity_threshold
+    AND (
+        filter_user_id IS NULL
+        OR m.user_id = filter_user_id
+    )
 ORDER BY m.embedding <=> query_embedding
 LIMIT max_results;
 END;
@@ -169,7 +174,8 @@ CREATE OR REPLACE FUNCTION hybrid_search_memories(
         search_query TEXT,
         query_embedding VECTOR(384) DEFAULT NULL,
         max_results INTEGER DEFAULT 10,
-        semantic_weight FLOAT DEFAULT 0.5
+        semantic_weight FLOAT DEFAULT 0.5,
+        filter_user_id TEXT DEFAULT NULL
     ) RETURNS TABLE(
         id UUID,
         content TEXT,
@@ -201,10 +207,16 @@ SELECT m.id,
     END AS score,
     m.created_at
 FROM memories m
-WHERE m.content_tsvector @@ plainto_tsquery('english', search_query)
-    OR (
-        query_embedding IS NOT NULL
-        AND m.embedding IS NOT NULL
+WHERE (
+        m.content_tsvector @@ plainto_tsquery('english', search_query)
+        OR (
+            query_embedding IS NOT NULL
+            AND m.embedding IS NOT NULL
+        )
+    )
+    AND (
+        filter_user_id IS NULL
+        OR m.user_id = filter_user_id
     )
 ORDER BY score DESC
 LIMIT max_results;

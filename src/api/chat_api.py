@@ -26,13 +26,13 @@ from config import Config
 from llm_controllers import LLMController
 
 # Import Supabase components
-from src.database.supabase_memory_adapter import (
+from database.supabase_memory_adapter import (
     SupabaseAgenticMemorySystem,
     SupabaseMemoryNote,
 )
-from src.database.supabase_client import SupabaseMemoryClient
-from src.database.supabase_config import SupabaseConfigManager
-from src.database.supabase_utils import setup_supabase_environment
+from database.supabase_client import SupabaseMemoryClient
+from database.supabase_config import SupabaseConfigManager
+from database.supabase_utils import setup_supabase_environment
 
 
 # Initialize Flask app
@@ -164,11 +164,30 @@ class SupabaseChatAgent:
                 },
             )
 
+            # Format related memories for frontend
+            formatted_related_memories = []
+            for mem in related_memories:
+                formatted_related_memories.append(
+                    {
+                        "id": mem.id,
+                        "content": (
+                            mem.content[:100] + "..."
+                            if len(mem.content) > 100
+                            else mem.content
+                        ),
+                        "context": mem.context,
+                        "category": mem.category,
+                        "importance_score": mem.importance_score,
+                        "timestamp": mem.timestamp,
+                    }
+                )
+
             return {
                 "response": response,
                 "session_id": session_id,
                 "memory_ids": [user_memory_id, assistant_memory_id],
                 "related_memories_count": len(related_memories),
+                "related_memories": formatted_related_memories,
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -303,12 +322,19 @@ def search_memories():
     """Search for related memories."""
     try:
         data = request.get_json()
+        logger.info(f"Search request data: {data}")
+
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
         query = data.get("query", "").strip()
         user_id = data.get("user_id", "anonymous")
         limit = data.get("limit", 5)
 
+        logger.info(f"Search query: '{query}', user_id: '{user_id}', limit: {limit}")
+
         if not query:
-            return jsonify({"error": "Query is required"}), 400
+            return jsonify({"error": "Query is required", "received_data": data}), 400
 
         # Set user_id on memory system
         memory_system.user_id = user_id
@@ -316,6 +342,7 @@ def search_memories():
 
         # Search memories
         results = memory_system.get_related_memories(query, k=limit)
+        logger.info(f"Found {len(results)} results for query: '{query}'")
 
         # Format results
         formatted_results = []
@@ -348,6 +375,7 @@ def search_memories():
 
     except Exception as e:
         logger.error(f"Search memories error: {str(e)}")
+        logger.error(f"Search memories traceback: {e}", exc_info=True)
         return jsonify({"error": "Failed to search memories", "details": str(e)}), 500
 
 
@@ -506,10 +534,14 @@ def create_app(config=None):
     return app
 
 
-if __name__ == "__main__":
+def start_app():
     # Initialize memory system
     if initialize_memory_system():
         logger.info("Starting Flask API server...")
         app.run(host="0.0.0.0", port=5000, debug=True)
     else:
         logger.error("Failed to initialize memory system. Exiting.")
+
+
+if __name__ == "__main__":
+    start_app()
