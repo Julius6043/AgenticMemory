@@ -102,15 +102,61 @@ class SupabaseRetriever:
         Returns:
             List of memory dictionaries
         """
-        # Generate embedding for the query
-        query_embedding = self.embedding_model.encode([query])[0].tolist()
+        logger.info("🔍 " + "=" * 60)
+        logger.info("🔍 SUPABASE RETRIEVER - SEARCH OPERATION")
+        logger.info("🔍 " + "=" * 60)
+        logger.info(f"📝 Query: '{query}'")
+        logger.info(f"📊 Requested results (k): {k}")
+        logger.info(f"👤 User ID filter: {self.user_id}")
 
-        # Search using hybrid search
-        results = self.client.search_similar_memories(
-            embedding=query_embedding, limit=k, user_id=self.user_id
-        )
+        try:
+            # Generate embedding for the query
+            logger.info("🧠 Generating query embedding...")
+            query_embedding = self.embedding_model.encode([query])[0].tolist()
+            logger.info(f"✅ Embedding generated (dimensions: {len(query_embedding)})")
 
-        return results
+            # Search using hybrid search
+            logger.info("🔍 Performing similarity search in Supabase...")
+            logger.info(
+                f"🎯 Using lower similarity threshold (0.3) for better results..."
+            )
+            results = self.client.search_similar_memories(
+                embedding=query_embedding,
+                limit=k,
+                user_id=self.user_id,
+                similarity_threshold=0.3,  # Lower threshold for better recall
+            )
+
+            logger.info(f"📊 Found {len(results)} results from Supabase")
+
+            # Log details about each result
+            if results:
+                logger.info("📋 Search Results Details:")
+                for i, result in enumerate(results):
+                    similarity = result.get("similarity", "N/A")
+                    content_preview = result.get("content", "")[:80] + "..."
+                    logger.info(f"  {i+1}. ID: {result.get('id')}")
+                    logger.info(f"     Similarity: {similarity}")
+                    logger.info(f"     Content: {content_preview}")
+                    logger.info(f"     Category: {result.get('category', 'N/A')}")
+                    logger.info("     " + "-" * 50)
+            else:
+                logger.info("ℹ️  No results found in search")
+
+            logger.info("🔍 " + "=" * 60)
+            logger.info("✅ SEARCH OPERATION COMPLETED")
+            logger.info("🔍 " + "=" * 60)
+
+            return results
+
+        except Exception as e:
+            logger.error("🔍 " + "=" * 60)
+            logger.error("❌ SEARCH OPERATION FAILED")
+            logger.error("🔍 " + "=" * 60)
+            logger.error(f"🚨 Error: {str(e)}")
+            logger.error(f"📍 Error Type: {type(e).__name__}")
+            logger.error("🔍 " + "=" * 60, exc_info=True)
+            return []
 
     def add_documents(self, documents: List[str]):
         """Add documents to the retriever (no-op for Supabase)."""
@@ -610,19 +656,48 @@ class SupabaseAgenticMemorySystem:
         Returns:
             List of related SupabaseMemoryNote objects
         """
+        logger.info("🧠 " + "=" * 60)
+        logger.info("🧠 MEMORY SYSTEM - GET RELATED MEMORIES")
+        logger.info("🧠 " + "=" * 60)
+        logger.info(f"📝 Query: '{query}'")
+        logger.info(f"📊 Requested count (k): {k}")
+        logger.info(f"👤 User ID: {self.user_id}")
+
         try:
+            logger.info("🔍 Calling retriever search...")
             results = self.retriever.search(query, k)
             related_memories = []
 
-            for result in results:
+            logger.info(
+                f"🔄 Converting {len(results)} results to SupabaseMemoryNote objects..."
+            )
+
+            for i, result in enumerate(results):
+                logger.info(
+                    f"🔄 Processing result {i+1}/{len(results)}: {result.get('id')}"
+                )
                 memory_note = SupabaseMemoryNote(result)
+
                 # Cache the memory
+                logger.info(f"💾 Caching memory: {memory_note.id}")
                 self.memories[memory_note.id] = memory_note
                 related_memories.append(memory_note)
 
+            logger.info("🧠 " + "=" * 60)
+            logger.info("✅ RELATED MEMORIES RETRIEVAL COMPLETED")
+            logger.info(f"📊 Total memories retrieved: {len(related_memories)}")
+            logger.info(f"📋 Memory IDs: {[mem.id for mem in related_memories]}")
+            logger.info("🧠 " + "=" * 60)
+
             return related_memories
+
         except Exception as e:
-            logger.error(f"Error getting related memories: {e}")
+            logger.error("🧠 " + "=" * 60)
+            logger.error("❌ RELATED MEMORIES RETRIEVAL FAILED")
+            logger.error("🧠 " + "=" * 60)
+            logger.error(f"🚨 Error: {str(e)}")
+            logger.error(f"📍 Error Type: {type(e).__name__}")
+            logger.error("🧠 " + "=" * 60, exc_info=True)
             return []
 
     def get_memory(self, memory_id: str) -> Optional[SupabaseMemoryNote]:

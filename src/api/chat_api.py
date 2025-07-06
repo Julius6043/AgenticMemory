@@ -94,28 +94,75 @@ class SupabaseChatAgent:
             Dictionary containing response and metadata
         """
         try:
+            logger.info("=" * 80)
+            logger.info(f"🚀 CHAT AGENT - Processing Message")
+            logger.info("=" * 80)
+            logger.info(f"👤 User ID: {user_id}")
+            logger.info(f"💬 Session ID: {session_id}")
+            logger.info(f"📝 Message: {message}")
+            logger.info("-" * 80)
+
             # Set user_id on memory system for this request
             if user_id:
+                logger.info(f"🔧 Setting user_id on memory system: {user_id}")
                 self.memory_system.user_id = user_id
                 self.memory_system.retriever.user_id = user_id
 
             # Search for related memories first
+            logger.info(f"🔍 Searching for related memories (k=5)...")
             related_memories = self.memory_system.get_related_memories(message, k=5)
+            logger.info(f"📊 Found {len(related_memories)} related memories")
+
+            logger.info(f"📊 Found {len(related_memories)} related memories")
+
+            # Log detailed information about each related memory
+            if related_memories:
+                logger.info("📋 Related Memories Details:")
+                for i, mem in enumerate(related_memories):
+                    logger.info(f"  {i+1}. ID: {mem.id}")
+                    logger.info(f"     Content: {mem.content[:100]}...")
+                    logger.info(f"     Context: {mem.context}")
+                    logger.info(f"     Category: {mem.category}")
+                    logger.info(
+                        f"     Similarity Score: {getattr(mem, 'similarity', 'N/A')}"
+                    )
+                    logger.info(f"     Timestamp: {mem.timestamp}")
+                    logger.info("     " + "-" * 60)
+            else:
+                logger.info("ℹ️  No related memories found")
 
             # Format related memories for context
             related_memories_text = ""
+            related_memory_ids = []
+
             if related_memories:
+                logger.info("🔄 Formatting memories for LLM context...")
                 related_memories_text = "\n".join(
                     [f"- {mem.content[:100]}..." for mem in related_memories[:3]]
                 )
+                related_memory_ids = [mem.id for mem in related_memories]
+                logger.info(
+                    f"✅ Formatted {len(related_memories[:3])} memories for context"
+                )
+
+            logger.info("-" * 80)
+            logger.info(f"🤖 Generating LLM response...")
 
             # Generate response using LLM
             prompt = self.system_prompt.format(
                 query=message, related_memories=related_memories_text
             )
+
+            logger.info(f"📤 Sending prompt to LLM (length: {len(prompt)} chars)")
             response = self.memory_system.llm_controller.get_completion(prompt)
+            logger.info(f"📥 Received LLM response (length: {len(response)} chars)")
+            logger.info(f"🔤 Response preview: {response[:150]}...")
+
+            logger.info("-" * 80)
+            logger.info("💾 Storing conversation in memory system...")
 
             # Store user message as memory
+            logger.info("📝 Adding user message to memory...")
             user_memory_id = self.memory_system.add_note(
                 content=f"User asked: {message}",
                 context="User Query",
@@ -123,8 +170,10 @@ class SupabaseChatAgent:
                 user_id=user_id,
                 session_id=session_id,
             )
+            logger.info(f"✅ User memory stored with ID: {user_memory_id}")
 
             # Store assistant response as memory
+            logger.info("🤖 Adding assistant response to memory...")
             assistant_memory_id = self.memory_system.add_note(
                 content=f"Assistant responded: {response}",
                 context="Assistant Response",
@@ -132,15 +181,22 @@ class SupabaseChatAgent:
                 user_id=user_id,
                 session_id=session_id,
             )
+            logger.info(f"✅ Assistant memory stored with ID: {assistant_memory_id}")
+
+            logger.info("-" * 80)
+            logger.info("🗄️  Storing chat session and messages...")
 
             # Ensure chat session exists
+            logger.info("🔍 Ensuring chat session exists...")
             self.supabase_client.create_chat_session(
                 session_id=session_id,
                 user_id=user_id,
                 metadata={"created_via": "chat_api"},
             )
+            logger.info(f"✅ Chat session ensured: {session_id}")
 
             # Store user message in Supabase
+            logger.info("💬 Adding user message to chat history...")
             self.supabase_client.add_chat_message(
                 session_id=session_id,
                 message_type="user",
@@ -148,11 +204,14 @@ class SupabaseChatAgent:
                 memory_ids=[user_memory_id],
                 metadata={
                     "user_message": message,
-                    "related_memory_ids": [mem.id for mem in related_memories],
+                    "related_memory_ids": related_memory_ids,
+                    "context_memories_used": len(related_memories),
                 },
             )
+            logger.info(f"✅ User message added to chat history")
 
             # Store assistant response in Supabase
+            logger.info("🤖 Adding assistant response to chat history...")
             self.supabase_client.add_chat_message(
                 session_id=session_id,
                 message_type="assistant",
@@ -160,43 +219,87 @@ class SupabaseChatAgent:
                 memory_ids=[assistant_memory_id],
                 metadata={
                     "assistant_response": response,
-                    "related_memory_ids": [mem.id for mem in related_memories],
+                    "related_memory_ids": related_memory_ids,
+                    "context_memories_used": len(related_memories),
                 },
             )
+            logger.info(f"✅ Assistant response added to chat history")
+
+            logger.info("-" * 80)
+            logger.info("📋 Formatting response data...")
 
             # Format related memories for frontend
             formatted_related_memories = []
             for mem in related_memories:
-                formatted_related_memories.append(
-                    {
-                        "id": mem.id,
-                        "content": (
-                            mem.content[:100] + "..."
-                            if len(mem.content) > 100
-                            else mem.content
-                        ),
-                        "context": mem.context,
-                        "category": mem.category,
-                        "importance_score": mem.importance_score,
-                        "timestamp": mem.timestamp,
-                    }
-                )
+                formatted_memory = {
+                    "id": mem.id,
+                    "content": (
+                        mem.content[:100] + "..."
+                        if len(mem.content) > 100
+                        else mem.content
+                    ),
+                    "context": mem.context,
+                    "category": mem.category,
+                    "importance_score": mem.importance_score,
+                    "timestamp": mem.timestamp,
+                    "used_as_context": True,  # Indicate this memory was used for context
+                }
+                formatted_related_memories.append(formatted_memory)
+                logger.info(f"📋 Formatted memory: {mem.id} - {mem.content[:50]}...")
 
-            return {
+            # Prepare comprehensive response
+            result = {
                 "response": response,
                 "session_id": session_id,
                 "memory_ids": [user_memory_id, assistant_memory_id],
                 "related_memories_count": len(related_memories),
                 "related_memories": formatted_related_memories,
+                "context_memory_ids": related_memory_ids,  # NEW: IDs of memories used as context
+                "processing_details": {  # NEW: Detailed processing information
+                    "user_memory_id": user_memory_id,
+                    "assistant_memory_id": assistant_memory_id,
+                    "memories_retrieved": len(related_memories),
+                    "memories_used_for_context": len(related_memories[:3]),
+                    "llm_prompt_length": len(prompt),
+                    "llm_response_length": len(response),
+                },
                 "timestamp": datetime.now().isoformat(),
             }
 
+            logger.info("=" * 80)
+            logger.info("✅ CHAT PROCESSING COMPLETED SUCCESSFULLY")
+            logger.info(f"📊 Summary:")
+            logger.info(f"   - User Message: {message[:50]}...")
+            logger.info(f"   - Response Length: {len(response)} chars")
+            logger.info(f"   - Memories Retrieved: {len(related_memories)}")
+            logger.info(f"   - Context Memory IDs: {related_memory_ids}")
+            logger.info(f"   - New Memory IDs: {[user_memory_id, assistant_memory_id]}")
+            logger.info("=" * 80)
+
+            return result
+
         except Exception as e:
-            logger.error(f"Error processing message: {str(e)}")
+            logger.error("=" * 80)
+            logger.error("❌ CHAT PROCESSING ERROR")
+            logger.error("=" * 80)
+            logger.error(f"💬 Message: {message}")
+            logger.error(f"👤 User ID: {user_id}")
+            logger.error(f"📱 Session ID: {session_id}")
+            logger.error(f"🚨 Error: {str(e)}")
+            logger.error(f"📍 Error Type: {type(e).__name__}")
+            logger.error("=" * 80, exc_info=True)
+
             return {
                 "response": "I'm sorry, I encountered an error processing your message. Please try again.",
                 "error": str(e),
+                "error_type": type(e).__name__,
                 "session_id": session_id,
+                "context_memory_ids": [],  # Empty list when error occurs
+                "processing_details": {
+                    "error_occurred": True,
+                    "error_message": str(e),
+                    "memories_retrieved": 0,
+                },
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -255,26 +358,55 @@ def health_check():
 def chat():
     """Main chat endpoint for sending messages to the agent."""
     try:
+        logger.info("🌐 =" * 40)
+        logger.info("🌐 CHAT API ENDPOINT CALLED")
+        logger.info("🌐 =" * 40)
+
         data = request.get_json()
+        logger.info(f"📥 Received request data: {data}")
+
         message = data.get("message", "").strip()
         session_id = data.get(
             "session_id", f"session-{int(datetime.now().timestamp() * 1000)}"
         )
         user_id = data.get("user_id", "anonymous")
 
+        logger.info(f"📝 Extracted message: '{message}'")
+        logger.info(f"👤 User ID: {user_id}")
+        logger.info(f"💬 Session ID: {session_id}")
+
         if not message:
+            logger.warning("⚠️  Empty message received")
             return jsonify({"error": "Message is required"}), 400
 
+        logger.info("🤖 Creating chat agent...")
         # Create chat agent
         chat_agent = SupabaseChatAgent(memory_system, supabase_client)
 
+        logger.info("🚀 Processing message with chat agent...")
         # Process message
         result = chat_agent.process_message(message, session_id, user_id)
+
+        logger.info("🌐 =" * 40)
+        logger.info("✅ CHAT API RESPONSE READY")
+        logger.info(f"📊 Response contains:")
+        logger.info(f"   - Response length: {len(result.get('response', ''))}")
+        logger.info(f"   - Memory IDs: {result.get('memory_ids', [])}")
+        logger.info(f"   - Context Memory IDs: {result.get('context_memory_ids', [])}")
+        logger.info(
+            f"   - Related memories count: {result.get('related_memories_count', 0)}"
+        )
+        logger.info("🌐 =" * 40)
 
         return jsonify(result)
 
     except Exception as e:
-        logger.error(f"Chat error: {str(e)}")
+        logger.error("🌐 =" * 40)
+        logger.error("❌ CHAT API ERROR")
+        logger.error("🌐 =" * 40)
+        logger.error(f"🚨 Error: {str(e)}")
+        logger.error(f"📍 Error Type: {type(e).__name__}")
+        logger.error("🌐 =" * 40, exc_info=True)
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 
