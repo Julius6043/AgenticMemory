@@ -1,13 +1,14 @@
 """
-Supabase Memory Adapter for AgenticMemory System.
+Enhanced Supabase Memory Adapter for AgenticMemory System.
 
-This module provides an adapter that integrates Supabase database
-with the existing AgenticMemory system, replacing local storage
-with persistent cloud storage.
+This module provides an improved adapter that integrates Supabase database
+with the AgenticMemory system, incorporating lessons from the Ground_version
+and adding robust memory linking and evolution capabilities.
 """
 
 import json
 import uuid
+import logging
 from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
 import numpy as np
@@ -16,15 +17,9 @@ import numpy as np
 import sys
 import os
 
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
-import sys
-import os
-
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from src.memory import MemoryNote, AgenticMemorySystem
-from src.retrievers import SimpleEmbeddingRetriever
+from src.memory import MemoryNote
 from src.llm_controllers import LLMController
 from sentence_transformers import SentenceTransformer
 
@@ -32,9 +27,11 @@ from sentence_transformers import SentenceTransformer
 from src.database.supabase_client import SupabaseMemoryClient
 from src.database.supabase_config import SupabaseConfigManager
 
+logger = logging.getLogger(__name__)
+
 
 class SupabaseMemoryNote(MemoryNote):
-    """Extended MemoryNote that works with Supabase storage."""
+    """Enhanced MemoryNote that works with Supabase storage and includes full metadata."""
 
     def __init__(self, supabase_data: Dict[str, Any], **kwargs):
         """Initialize from Supabase data.
@@ -48,7 +45,9 @@ class SupabaseMemoryNote(MemoryNote):
             content=supabase_data.get("content", ""),
             id=str(supabase_data.get("id", str(uuid.uuid4()))),
             keywords=supabase_data.get("keywords", []),
-            links=supabase_data.get("links", []),
+            links=supabase_data.get(
+                "linked_memory_ids", []
+            ),  # Use linked_memory_ids from DB
             importance_score=supabase_data.get("importance_score", 1.0),
             retrieval_count=supabase_data.get("retrieval_count", 0),
             timestamp=supabase_data.get("created_at", datetime.now().isoformat()),
@@ -68,10 +67,11 @@ class SupabaseMemoryNote(MemoryNote):
         self.user_id = supabase_data.get("user_id")
         self.session_id = supabase_data.get("session_id")
         self.updated_at = supabase_data.get("updated_at")
+        self.evolution_count = supabase_data.get("evolution_count", 0)
 
 
 class SupabaseRetriever:
-    """Retriever that uses Supabase for memory search."""
+    """Enhanced retriever that uses Supabase for memory search."""
 
     def __init__(
         self,
@@ -92,26 +92,25 @@ class SupabaseRetriever:
             "all-MiniLM-L6-v2"
         )
 
-    def search(self, query: str, k: int = 5) -> List[int]:
-        """Search for similar memories.
+    def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
+        """Search for similar memories and return structured results.
 
         Args:
             query: Search query
             k: Number of results to return
 
         Returns:
-            List of memory indices (for compatibility)
+            List of memory dictionaries
         """
         # Generate embedding for the query
         query_embedding = self.embedding_model.encode([query])[0].tolist()
 
         # Search using hybrid search
-        results = self.client.hybrid_search_memories(
-            query=query, embedding=query_embedding, limit=k, user_id=self.user_id
+        results = self.client.search_similar_memories(
+            embedding=query_embedding, limit=k, user_id=self.user_id
         )
 
-        # Return indices (for compatibility with existing code)
-        return list(range(len(results)))
+        return results
 
     def add_documents(self, documents: List[str]):
         """Add documents to the retriever (no-op for Supabase)."""
@@ -119,8 +118,8 @@ class SupabaseRetriever:
         pass
 
 
-class SupabaseAgenticMemorySystem(AgenticMemorySystem):
-    """AgenticMemory system with Supabase backend."""
+class SupabaseAgenticMemorySystem:
+    """Enhanced AgenticMemory system with Supabase backend and improved evolution."""
 
     def __init__(
         self,
@@ -147,6 +146,7 @@ class SupabaseAgenticMemorySystem(AgenticMemorySystem):
         self.llm_controller = LLMController(llm_backend, llm_model, api_key)
         self.embedding_model = SentenceTransformer(model_name)
         self.user_id = user_id
+        self.model_name = model_name
 
         # Initialize Supabase client
         self.supabase_client = supabase_client or SupabaseMemoryClient()
@@ -160,13 +160,15 @@ class SupabaseAgenticMemorySystem(AgenticMemorySystem):
             self.supabase_client, self.embedding_model, user_id
         )
 
-        # Memory cache for performance
-        self.memory_cache: Dict[str, SupabaseMemoryNote] = {}
+        # Memory cache for performance (similar to Ground_version approach)
+        self.memories: Dict[str, SupabaseMemoryNote] = {}
 
         # Evolution settings
         self.evo_cnt = 0
         self.evo_threshold = evo_threshold
-        self.evolution_system_prompt = """
+
+        # Enhanced evolution system prompt from Ground_version
+        self._evolution_system_prompt = """
         You are an AI memory evolution agent responsible for managing and evolving a knowledge base.
         Analyze the new memory note according to keywords and context, also with their several nearest neighbors memory.
         Make decisions about its evolution.  
@@ -191,196 +193,59 @@ class SupabaseAgenticMemorySystem(AgenticMemorySystem):
         {{
             "should_evolve": true or false,
             "actions": ["strengthen", "update_neighbor"],
-            "suggested_connections": [neighbor_memory_indices],
+            "suggested_connections": ["neighbor_memory_ids"],
             "tags_to_update": ["tag_1",...,"tag_n"], 
             "new_context_neighborhood": ["new context",...,"new context"],
             "new_tags_neighborhood": [["tag_1",...,"tag_n"],...["tag_1",...,"tag_n"]],
         }}
         """
 
-    @property
-    def memories(self) -> Dict[str, SupabaseMemoryNote]:
-        """Get memories dictionary (for compatibility)."""
-        return self.memory_cache
-
-    def add_note(self, content: str, time: str = None, **kwargs) -> str:
-        """Add a new memory note to Supabase.
+    def analyze_content(self, content: str) -> Dict:
+        """Analyze content using LLM to extract semantic metadata.
 
         Args:
-            content: Main content of the memory
-            time: Timestamp (auto-generated if None)
-            **kwargs: Additional memory note parameters
+            content (str): The text content to analyze
 
         Returns:
-            String ID of the created memory note
+            Dict: Contains extracted metadata with keys:
+                - keywords: List[str]
+                - context: str
+                - tags: List[str]
         """
-        # Generate metadata using LLM if not provided
-        context = kwargs.get("context")
-        category = kwargs.get("category")
-        keywords = kwargs.get("keywords")
-        tags = kwargs.get("tags")
+        prompt = (
+            """Generate a structured analysis of the following content by:
+            1. Identifying the most salient keywords (focus on nouns, verbs, and key concepts)
+            2. Extracting core themes and contextual elements
+            3. Creating relevant categorical tags
 
-        if any(param is None for param in [context, category, keywords, tags]):
-            try:
-                metadata = MemoryNote.analyze_content(content, self.llm_controller)
-                context = context or metadata.get("context", "General")
-                category = category or metadata.get("category", "Uncategorized")
-                keywords = keywords or metadata.get("keywords", [])
-                tags = tags or metadata.get("tags", [])
-            except Exception as e:
-                print(f"Failed to analyze content with LLM: {e}")
-                # Use defaults
-                context = context or "General"
-                category = category or "Uncategorized"
-                keywords = keywords or []
-                tags = tags or []
+            Format the response as a JSON object:
+            {
+                "keywords": [
+                    // several specific, distinct keywords that capture key concepts and terminology
+                    // Order from most to least important
+                    // Don't include keywords that are the name of the speaker or time
+                    // At least three keywords, but don't be too redundant.
+                ],
+                "context": 
+                    // one sentence summarizing:
+                    // - Main topic/domain
+                    // - Key arguments/points
+                    // - Intended audience/purpose
+                ,
+                "tags": [
+                    // several broad categories/themes for classification
+                    // Include domain, format, and type tags
+                    // At least three tags, but don't be too redundant.
+                ]
+            }
 
-        # Generate embedding
-        embedding = self.embedding_model.encode([content])[0].tolist()
-
-        # Remove conflicting keys from kwargs
-        kwargs_clean = {
-            k: v
-            for k, v in kwargs.items()
-            if k
-            not in [
-                "content",
-                "embedding",
-                "context",
-                "category",
-                "keywords",
-                "tags",
-                "user_id",
-            ]
-        }
-
-        # Create memory in Supabase
-        memory_id = self.supabase_client.create_memory(
-            content=content,
-            embedding=embedding,
-            context=context,
-            category=category,
-            keywords=keywords,
-            tags=tags,
-            user_id=self.user_id,
-            **kwargs_clean,
+            Content for analysis:
+            """
+            + content
         )
-
-        # Load memory into cache (without incrementing retrieval count since we just created it)
-        memory_data = self.supabase_client._get_memory_without_count(memory_id)
-        if memory_data:
-            memory_note = SupabaseMemoryNote(memory_data)
-            self.memory_cache[memory_id] = memory_note
-
-            # Process evolution
-            try:
-                evo_label, updated_note = self.process_memory(memory_note)
-                if evo_label:
-                    self.evo_cnt += 1
-                    if self.evo_cnt >= self.evo_threshold:
-                        self.consolidate_memories()
-                        self.evo_cnt = 0
-            except Exception as e:
-                print(f"Evolution processing failed: {e}")
-
-        return memory_id
-
-    def get_memory(self, memory_id: str) -> Optional[SupabaseMemoryNote]:
-        """Get a memory by ID.
-
-        Args:
-            memory_id: Memory ID
-
-        Returns:
-            SupabaseMemoryNote or None
-        """
-        # Check cache first
-        if memory_id in self.memory_cache:
-            return self.memory_cache[memory_id]
-
-        # Load from Supabase
-        memory_data = self.supabase_client.get_memory(memory_id)
-        if memory_data:
-            memory_note = SupabaseMemoryNote(memory_data)
-            self.memory_cache[memory_id] = memory_note
-            return memory_note
-
-        return None
-
-    def get_related_memories(self, query: str, k: int = 5) -> List[SupabaseMemoryNote]:
-        """Get related memories using Supabase search.
-
-        Args:
-            query: Search query
-            k: Number of results to return
-
-        Returns:
-            List of SupabaseMemoryNote objects
-        """
-        # Generate embedding for query
-        query_embedding = self.embedding_model.encode([query])[0].tolist()
-
-        # Search using hybrid search
-        results = self.supabase_client.hybrid_search_memories(
-            query=query, embedding=query_embedding, limit=k, user_id=self.user_id
-        )
-
-        # Convert to SupabaseMemoryNote objects
-        memory_notes = []
-        for result in results:
-            memory_note = SupabaseMemoryNote(result)
-            # Cache the memory
-            self.memory_cache[memory_note.id] = memory_note
-            memory_notes.append(memory_note)
-
-        return memory_notes
-
-    def find_related_memories(self, query: str, k: int = 5) -> Tuple[str, List[int]]:
-        """Find related memories and return formatted string.
-
-        Args:
-            query: Search query
-            k: Number of results to return
-
-        Returns:
-            Tuple of (formatted_string, indices_list)
-        """
-        related_memories = self.get_related_memories(query, k)
-
-        # Format memories for display
-        formatted_memories = []
-        indices = []
-
-        for i, memory in enumerate(related_memories):
-            formatted_memory = f"Memory {i+1}:\nContent: {memory.content}\nContext: {memory.context}\nKeywords: {', '.join(memory.keywords)}\nTags: {', '.join(memory.tags)}\n"
-            formatted_memories.append(formatted_memory)
-            indices.append(i)
-
-        return "\n".join(formatted_memories), indices
-
-    def process_memory(
-        self, note: SupabaseMemoryNote
-    ) -> Tuple[bool, SupabaseMemoryNote]:
-        """Process a memory note and determine evolution actions.
-
-        Args:
-            note: Memory note to process
-
-        Returns:
-            Tuple of (should_evolve, processed_note)
-        """
         try:
-            neighbor_memory, indices = self.find_related_memories(note.content, k=5)
-            prompt_memory = self.evolution_system_prompt.format(
-                context=note.context,
-                content=note.content,
-                keywords=note.keywords,
-                nearest_neighbors_memories=neighbor_memory,
-                neighbor_number=len(indices),
-            )
-
-            response = self.llm_controller.get_completion(
-                prompt_memory,
+            response = self.llm_controller.llm.get_completion(
+                prompt,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
@@ -388,170 +253,417 @@ class SupabaseAgenticMemorySystem(AgenticMemorySystem):
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "should_evolve": {"type": "boolean"},
-                                "actions": {
+                                "keywords": {
                                     "type": "array",
                                     "items": {"type": "string"},
                                 },
-                                "suggested_connections": {
-                                    "type": "array",
-                                    "items": {"type": "integer"},
+                                "context": {
+                                    "type": "string",
                                 },
-                                "new_context_neighborhood": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                                "tags_to_update": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                                "new_tags_neighborhood": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "array",
-                                        "items": {"type": "string"},
-                                    },
-                                },
+                                "tags": {"type": "array", "items": {"type": "string"}},
                             },
-                            "required": [
-                                "should_evolve",
-                                "actions",
-                                "suggested_connections",
-                                "tags_to_update",
-                                "new_context_neighborhood",
-                                "new_tags_neighborhood",
-                            ],
-                            "additionalProperties": False,
                         },
-                        "strict": True,
                     },
                 },
             )
+            return json.loads(response)
+        except Exception as e:
+            logger.error(f"Error analyzing content: {e}")
+            return {"keywords": [], "context": "General", "tags": []}
 
-            try:
-                response_json = json.loads(response)
-            except json.JSONDecodeError:
-                print("Failed to parse evolution response as JSON")
-                return False, note
+    def add_note(self, content: str, time: str = None, **kwargs) -> str:
+        """Add a new memory note"""
+        # Create MemoryNote without llm_controller first
+        if time is not None:
+            kwargs["timestamp"] = time
 
-            should_evolve = response_json.get("should_evolve", False)
+        # Analyze content first
+        analysis = self.analyze_content(content)
 
-            if should_evolve:
-                # Process evolution actions
-                actions = response_json.get("actions", [])
+        # Merge analysis results with kwargs, giving priority to explicitly passed kwargs
+        # Remove context from kwargs if it exists to avoid conflicts
+        explicit_context = kwargs.pop("context", None)
+        explicit_keywords = kwargs.pop("keywords", None)
+        explicit_tags = kwargs.pop("tags", None)
 
-                if "strengthen" in actions:
-                    # Update memory tags
-                    new_tags = response_json.get("tags_to_update", note.tags)
-                    updates = {"tags": new_tags}
-                    self.supabase_client.update_memory(note.id, updates)
-                    note.tags = new_tags
+        # Create note with analysis results, using explicit values when provided
+        note = MemoryNote(
+            content=content,
+            keywords=explicit_keywords or analysis.get("keywords", []),
+            context=explicit_context or analysis.get("context", "General"),
+            tags=explicit_tags or analysis.get("tags", []),
+            **kwargs,
+        )
 
-                if "update_neighbor" in actions:
-                    # Update neighbor memories
-                    related_memories = self.get_related_memories(note.content, k=5)
-                    new_contexts = response_json.get("new_context_neighborhood", [])
-                    new_tags_list = response_json.get("new_tags_neighborhood", [])
+        # Process memory evolution
+        evo_label, note = self.process_memory(note)
 
-                    for i, memory in enumerate(related_memories[: len(new_contexts)]):
-                        if i < len(new_contexts) and i < len(new_tags_list):
-                            updates = {
-                                "context": new_contexts[i],
-                                "tags": new_tags_list[i],
-                            }
-                            self.supabase_client.update_memory(memory.id, updates)
+        # Generate embedding
+        embedding = self.embedding_model.encode([content])[0].tolist()
 
-                            # Update cache
-                            if memory.id in self.memory_cache:
-                                self.memory_cache[memory.id].context = new_contexts[i]
-                                self.memory_cache[memory.id].tags = new_tags_list[i]
+        # Prepare memory data for Supabase
+        memory_data = {
+            "content": note.content,
+            "context": note.context,
+            "category": note.category,
+            "keywords": note.keywords,
+            "tags": note.tags,
+            "importance_score": note.importance_score,
+            "user_id": self.user_id,
+            "embedding": embedding,
+            "linked_memory_ids": note.links,  # Store links in the database
+            "evolution_count": len(note.evolution_history),
+        }
 
-                # Create memory links
-                suggested_connections = response_json.get("suggested_connections", [])
-                related_memories = self.get_related_memories(note.content, k=5)
+        # Create memory in Supabase
+        result = self.supabase_client.create_memory(memory_data)
+        if result:
+            memory_id = str(result.get("id"))
+            note.id = memory_id
 
-                for conn_idx in suggested_connections:
-                    if 0 <= conn_idx < len(related_memories):
-                        target_memory = related_memories[conn_idx]
-                        self.supabase_client.create_memory_link(
-                            note.id, target_memory.id, "evolved_connection"
+            # Create SupabaseMemoryNote and cache it
+            supabase_note = SupabaseMemoryNote({**memory_data, "id": memory_id})
+            self.memories[memory_id] = supabase_note
+
+            # Create memory links in database
+            if note.links:
+                for target_id in note.links:
+                    try:
+                        self.supabase_client.create_memory_link(memory_id, target_id)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to create memory link from {memory_id} to {target_id}: {e}"
                         )
 
-            return should_evolve, note
+            # Check if consolidation is needed
+            if evo_label:
+                self.evo_cnt += 1
+                if self.evo_cnt % self.evo_threshold == 0:
+                    self.consolidate_memories()
 
-        except Exception as e:
-            print(f"Error in process_memory: {e}")
-            return False, note
+            return memory_id
 
-    def consolidate_memories(self):
-        """Consolidate memories (clear cache to force refresh)."""
-        print("Consolidating memories - clearing cache")
-        self.memory_cache.clear()
+        raise Exception("Failed to create memory in Supabase")
 
-    def get_memory_statistics(self) -> Dict[str, Any]:
-        """Get memory system statistics from Supabase.
+    def read(self, memory_id: str) -> Optional[SupabaseMemoryNote]:
+        """Retrieve a specific memory by ID.
+
+        Args:
+            memory_id: ID of the memory to retrieve
 
         Returns:
-            Dict: Statistics dictionary
+            SupabaseMemoryNote object or None if not found
         """
-        return self.supabase_client.get_memory_statistics()
+        try:
+            # Check cache first
+            if memory_id in self.memories:
+                memory = self.memories[memory_id]
+                # Update last accessed time
+                self.supabase_client.update_memory(
+                    memory_id, {"last_accessed": datetime.now().isoformat()}
+                )
+                return memory
 
-    def search_memories(self, query: str, k: int = 5) -> List[SupabaseMemoryNote]:
-        """Search memories by text query.
+            # Retrieve from database
+            memory_data = self.supabase_client.get_memory(memory_id)
+            if memory_data:
+                memory = SupabaseMemoryNote(memory_data)
+                # Cache the memory
+                self.memories[memory_id] = memory
+
+                # Update last accessed time
+                self.supabase_client.update_memory(
+                    memory_id, {"last_accessed": datetime.now().isoformat()}
+                )
+
+                return memory
+            return None
+        except Exception as e:
+            logger.error(f"Error reading memory {memory_id}: {e}")
+            return None
+
+    def update(self, memory_id: str, updates: Dict[str, Any]) -> bool:
+        """Update a memory with new data.
+
+        Args:
+            memory_id: ID of the memory to update
+            updates: Dictionary of fields to update
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Update in database
+            success = self.supabase_client.update_memory(memory_id, updates)
+
+            if success:
+                # Update cache if memory exists
+                if memory_id in self.memories:
+                    memory = self.memories[memory_id]
+                    for key, value in updates.items():
+                        if hasattr(memory, key):
+                            setattr(memory, key, value)
+
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error updating memory {memory_id}: {e}")
+            return False
+
+    def delete(self, memory_id: str) -> bool:
+        """Delete a memory from the system.
+
+        Args:
+            memory_id: ID of the memory to delete
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Delete from database
+            success = self.supabase_client.delete_memory(memory_id)
+
+            if success:
+                # Remove from cache
+                if memory_id in self.memories:
+                    del self.memories[memory_id]
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting memory {memory_id}: {e}")
+            return False
+
+    def consolidate_memories(self):
+        """Consolidate memories (placeholder for future implementation)."""
+        try:
+            # Reset evolution counter
+            self.evo_cnt = 0
+            logger.info("Memory consolidation completed")
+        except Exception as e:
+            logger.error(f"Error in consolidation: {e}")
+
+    def find_related_memories(self, query: str, k: int = 5) -> Tuple[str, List[str]]:
+        """Find related memories and return formatted string with IDs.
 
         Args:
             query: Search query
-            k: Number of results
+            k: Number of results to return
 
         Returns:
-            List of SupabaseMemoryNote objects
+            Tuple of (formatted_memory_string, memory_ids)
         """
-        results = self.supabase_client.search_memories_by_text(
-            query=query, limit=k, user_id=self.user_id
-        )
+        try:
+            results = self.retriever.search(query, k)
+            memory_str = ""
+            memory_ids = []
 
-        memory_notes = []
-        for result in results:
-            memory_note = SupabaseMemoryNote(result)
-            self.memory_cache[memory_note.id] = memory_note
-            memory_notes.append(memory_note)
+            for i, result in enumerate(results):
+                memory_id = str(result.get("id", ""))
+                content = result.get("content", "")[:100]
+                context = result.get("context", "")
 
-        return memory_notes
+                memory_str += f"Memory {i}: {content}... Context: {context}\n"
+                memory_ids.append(memory_id)
 
-    def get_memories_by_category(
-        self, category: str, limit: int = 50
-    ) -> List[SupabaseMemoryNote]:
-        """Get memories by category.
+            return memory_str, memory_ids
+        except Exception as e:
+            logger.error(f"Error in find_related_memories: {e}")
+            return "", []
+
+    def process_memory(self, note: MemoryNote) -> Tuple[bool, MemoryNote]:
+        """Process a memory note and determine if it should evolve.
 
         Args:
-            category: Memory category
-            limit: Maximum results
+            note: The memory note to process
 
         Returns:
-            List of SupabaseMemoryNote objects
+            Tuple[bool, MemoryNote]: (should_evolve, processed_note)
         """
-        results = self.supabase_client.get_memories_by_category(
-            category=category, limit=limit, user_id=self.user_id
-        )
+        try:
+            # For first few memories, don't trigger evolution
+            if len(self.memories) < 2:
+                return False, note
 
-        memory_notes = []
-        for result in results:
-            memory_note = SupabaseMemoryNote(result)
-            self.memory_cache[memory_note.id] = memory_note
-            memory_notes.append(memory_note)
+            # Find related memories for evolution analysis
+            query = f"{note.context} {' '.join(note.keywords)}"
+            nearest_neighbors_memories, neighbor_ids = self.find_related_memories(
+                query, k=3
+            )
 
-        return memory_notes
+            if not neighbor_ids:
+                return False, note
 
-    def delete_memory(self, memory_id: str) -> bool:
-        """Delete a memory.
+            # Use LLM to determine evolution with simplified prompt
+            try:
+                simplified_prompt = f"""
+                Analyze this new memory and its relationship to existing memories.
+                
+                New memory:
+                Content: {note.content}
+                Keywords: {', '.join(note.keywords)}
+                Context: {note.context}
+                
+                Related memories:
+                {nearest_neighbors_memories}
+                
+                Should this memory be linked to any of the related memories? 
+                Respond with a JSON object:
+                {{
+                    "should_evolve": true/false,
+                    "suggested_links": [0, 1, 2],  // indices of memories to link to (0-2)
+                    "updated_tags": ["tag1", "tag2"]  // updated tags for the new memory
+                }}
+                """
+
+                response = self.llm_controller.llm.get_completion(simplified_prompt)
+
+                try:
+                    # Try to parse JSON response
+                    import re
+
+                    json_match = re.search(r"\{.*\}", response, re.DOTALL)
+                    if json_match:
+                        response_json = json.loads(json_match.group())
+
+                        should_evolve = response_json.get("should_evolve", False)
+
+                        if should_evolve:
+                            self.evo_cnt += 1
+
+                            # Handle links
+                            suggested_links = response_json.get("suggested_links", [])
+                            valid_connections = []
+
+                            for link_index in suggested_links:
+                                try:
+                                    if isinstance(
+                                        link_index, int
+                                    ) and 0 <= link_index < len(neighbor_ids):
+                                        valid_connections.append(
+                                            neighbor_ids[link_index]
+                                        )
+                                except (ValueError, IndexError):
+                                    continue
+
+                            note.links.extend(valid_connections)
+
+                            # Handle updated tags
+                            updated_tags = response_json.get("updated_tags", note.tags)
+                            if updated_tags:
+                                note.tags = updated_tags
+
+                            # Record evolution in history
+                            note.evolution_history.append(
+                                {
+                                    "timestamp": datetime.now().isoformat(),
+                                    "action": "simplified_evolution",
+                                    "links_added": len(valid_connections),
+                                    "tags_updated": len(updated_tags),
+                                }
+                            )
+
+                        return should_evolve, note
+
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(f"Failed to parse evolution response: {e}")
+                    return False, note
+
+            except Exception as e:
+                logger.error(f"Error in evolution analysis: {e}")
+                return False, note
+
+        except Exception as e:
+            logger.error(f"Error in process_memory: {e}")
+            return False, note
+
+    def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
+        """Search for memories using Supabase retrieval."""
+        try:
+            results = self.retriever.search(query, k)
+            memories = []
+
+            for result in results:
+                memory_dict = {
+                    "id": str(result.get("id")),
+                    "content": result.get("content", ""),
+                    "context": result.get("context", ""),
+                    "keywords": result.get("keywords", []),
+                    "tags": result.get("tags", []),
+                    "timestamp": result.get("created_at", ""),
+                    "category": result.get("category", "Uncategorized"),
+                    "similarity": result.get("similarity", 0.0),
+                }
+                memories.append(memory_dict)
+
+            return memories
+        except Exception as e:
+            logger.error(f"Error in search: {str(e)}")
+            return []
+
+    def get_related_memories(self, query: str, k: int = 5) -> List[SupabaseMemoryNote]:
+        """Find related memories and return SupabaseMemoryNote objects.
 
         Args:
-            memory_id: Memory ID
+            query: Search query
+            k: Number of results to return
 
         Returns:
-            bool: True if successful
+            List of related SupabaseMemoryNote objects
         """
-        success = self.supabase_client.delete_memory(memory_id)
-        if success and memory_id in self.memory_cache:
-            del self.memory_cache[memory_id]
-        return success
+        try:
+            results = self.retriever.search(query, k)
+            related_memories = []
+
+            for result in results:
+                memory_note = SupabaseMemoryNote(result)
+                # Cache the memory
+                self.memories[memory_note.id] = memory_note
+                related_memories.append(memory_note)
+
+            return related_memories
+        except Exception as e:
+            logger.error(f"Error getting related memories: {e}")
+            return []
+
+    def get_memory(self, memory_id: str) -> Optional[SupabaseMemoryNote]:
+        """Get a specific memory by ID.
+
+        Args:
+            memory_id: ID of the memory to retrieve
+
+        Returns:
+            SupabaseMemoryNote object or None if not found
+        """
+        try:
+            # Check cache first
+            if memory_id in self.memories:
+                return self.memories[memory_id]
+
+            # Get from database
+            memory_data = self.supabase_client.get_memory(memory_id)
+            if memory_data:
+                memory_note = SupabaseMemoryNote(memory_data)
+                # Cache the memory
+                self.memories[memory_id] = memory_note
+                return memory_note
+
+            return None
+        except Exception as e:
+            logger.error(f"Error getting memory {memory_id}: {e}")
+            return None
+
+    def get_memory_statistics(self) -> Dict[str, Any]:
+        """Get statistics about the memory system.
+
+        Returns:
+            Dictionary containing memory statistics
+        """
+        try:
+            return self.supabase_client.get_memory_statistics()
+        except Exception as e:
+            logger.error(f"Error getting memory statistics: {e}")
+            return {
+                "total_memories": 0,
+                "categories": {},
+                "users": {},
+            }

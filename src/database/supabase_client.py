@@ -70,82 +70,59 @@ class SupabaseMemoryClient:
     # MEMORY OPERATIONS
     # =============================================================================
 
-    def create_memory(
-        self,
-        content: str,
-        embedding: Optional[List[float]] = None,
-        context: str = "General",
-        category: str = "Uncategorized",
-        keywords: Optional[List[str]] = None,
-        tags: Optional[List[str]] = None,
-        importance_score: float = 1.0,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        **kwargs,
-    ) -> str:
+    def create_memory(self, memory_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new memory in Supabase.
 
         Args:
-            content: Memory content
-            embedding: Vector embedding for semantic search
-            context: Memory context
-            category: Memory category
-            keywords: List of keywords
-            tags: List of tags
-            importance_score: Importance score
-            user_id: User identifier
-            session_id: Session identifier
-            **kwargs: Additional metadata
+            memory_data: Dictionary containing memory data
 
         Returns:
-            str: Memory ID
+            Dict with memory data including ID if successful, None otherwise
         """
-        memory_data = {
-            "content": content,
-            "context": context,
-            "category": category,
-            "keywords": keywords or [],
-            "tags": tags or [],
-            "importance_score": importance_score,
-            "user_id": user_id,
-            "session_id": session_id,
+        # Prepare the data for insertion
+        prepared_data = {
+            "content": memory_data.get("content", ""),
+            "context": memory_data.get("context", "General"),
+            "category": memory_data.get("category", "Uncategorized"),
+            "keywords": memory_data.get("keywords", []),
+            "tags": memory_data.get("tags", []),
+            "importance_score": memory_data.get("importance_score", 1.0),
+            "user_id": memory_data.get("user_id"),
+            "session_id": memory_data.get("session_id"),
+            "linked_memory_ids": memory_data.get("linked_memory_ids", []),
+            "evolution_count": memory_data.get("evolution_count", 0),
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "last_accessed": datetime.now().isoformat(),
         }
 
-        # Convert embedding to proper format for PostgreSQL vector type
+        # Handle embedding conversion
+        embedding = memory_data.get("embedding")
         if embedding:
-            # Try different formats for PostgreSQL vector
             try:
                 if isinstance(embedding, list):
-                    # Direct list assignment - let Supabase handle the conversion
-                    memory_data["embedding"] = embedding
+                    prepared_data["embedding"] = embedding
                 elif isinstance(embedding, np.ndarray):
-                    memory_data["embedding"] = embedding.tolist()
+                    prepared_data["embedding"] = embedding.tolist()
                 else:
-                    memory_data["embedding"] = embedding
+                    prepared_data["embedding"] = embedding
             except Exception as e:
                 print(f"Warning: Failed to set embedding: {e}")
-                # Continue without embedding if conversion fails
-
-        # Add any additional metadata
-        for key, value in kwargs.items():
-            if key not in memory_data:
-                memory_data[key] = value
 
         try:
             result = (
-                self.client.table(self.memories_table).insert(memory_data).execute()
+                self.client.table(self.memories_table).insert(prepared_data).execute()
             )
 
             if result.data:
-                return str(result.data[0]["id"])
+                return result.data[0]
             else:
-                raise Exception("Failed to create memory: No data returned")
+                print("Failed to create memory: No data returned")
+                return None
 
         except Exception as e:
-            raise Exception(f"Failed to create memory: {e}")
+            print(f"Failed to create memory: {e}")
+            return None
 
     def get_memory(
         self, memory_id: str, increment_count: bool = True
@@ -372,6 +349,34 @@ class SupabaseMemoryClient:
             # Fallback to text search
             return self.search_memories_by_text(query, limit=limit, user_id=user_id)
 
+    def search_similar_memories(
+        self,
+        embedding: List[float],
+        limit: int = 10,
+        similarity_threshold: float = 0.5,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search for similar memories using embedding vector.
+
+        This is a convenience method that wraps search_memories_by_embedding
+        to match the interface expected by the SupabaseRetriever.
+
+        Args:
+            embedding: Query embedding vector
+            limit: Maximum number of results
+            similarity_threshold: Minimum similarity threshold
+            user_id: Filter by user ID
+
+        Returns:
+            List of memory dictionaries with similarity scores
+        """
+        return self.search_memories_by_embedding(
+            embedding=embedding,
+            similarity_threshold=similarity_threshold,
+            limit=limit,
+            user_id=user_id,
+        )
+
     def get_memories_by_category(
         self, category: str, limit: int = 50, user_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -484,7 +489,7 @@ class SupabaseMemoryClient:
             return False
 
     # =============================================================================
-    # MEMORY LINKS OPERATIONS
+    # MEMORY LINK OPERATIONS
     # =============================================================================
 
     def create_memory_link(
@@ -497,13 +502,13 @@ class SupabaseMemoryClient:
         """Create a link between two memories.
 
         Args:
-            source_memory_id: Source memory ID
-            target_memory_id: Target memory ID
-            link_type: Type of link
-            strength: Link strength
+            source_memory_id: ID of the source memory
+            target_memory_id: ID of the target memory
+            link_type: Type of relationship
+            strength: Strength of the relationship
 
         Returns:
-            str or None: Link ID if successful
+            Link ID if successful, None otherwise
         """
         try:
             link_data = {
@@ -518,43 +523,174 @@ class SupabaseMemoryClient:
             )
 
             if result.data:
-                return str(result.data[0]["id"])
+                link_id = result.data[0]["id"]
+
+                # Update the linked_memory_ids array in both memories
+                self._update_linked_memory_ids(source_memory_id, target_memory_id)
+                self._update_linked_memory_ids(target_memory_id, source_memory_id)
+
+                return str(link_id)
             return None
 
         except Exception as e:
-            print(f"Failed to create memory link: {e}")
+            print(f"Error creating memory link: {e}")
             return None
 
+    def _update_linked_memory_ids(self, memory_id: str, linked_id: str):
+        """Update the linked_memory_ids array in a memory.
+
+        Args:
+            memory_id: ID of the memory to update
+            linked_id: ID of the memory to link to
+        """
+        try:
+            # Get current memory to access existing links
+            current_memory = self.get_memory(memory_id)
+            if current_memory:
+                current_links = current_memory.get("linked_memory_ids", [])
+                if linked_id not in current_links:
+                    current_links.append(linked_id)
+
+                    # Update the memory with new links
+                    self.client.table(self.memories_table).update(
+                        {"linked_memory_ids": current_links}
+                    ).eq("id", memory_id).execute()
+
+        except Exception as e:
+            print(f"Error updating linked memory IDs: {e}")
+
     def get_memory_links(self, memory_id: str) -> List[Dict[str, Any]]:
-        """Get all links for a memory.
+        """Get all links for a specific memory.
 
         Args:
             memory_id: Memory ID
 
         Returns:
-            List of link dictionaries
+            List of memory links
         """
         try:
-            # Get outgoing links
-            outgoing = (
+            # Get links where this memory is the source
+            outgoing_links = (
                 self.client.table(self.memory_links_table)
                 .select("*")
                 .eq("source_memory_id", memory_id)
                 .execute()
             )
 
-            # Get incoming links
-            incoming = (
+            # Get links where this memory is the target
+            incoming_links = (
                 self.client.table(self.memory_links_table)
                 .select("*")
                 .eq("target_memory_id", memory_id)
                 .execute()
             )
 
-            return outgoing.data + incoming.data
+            all_links = []
+            if outgoing_links.data:
+                all_links.extend(outgoing_links.data)
+            if incoming_links.data:
+                all_links.extend(incoming_links.data)
+
+            return all_links
 
         except Exception as e:
-            print(f"Failed to get memory links: {e}")
+            print(f"Error getting memory links: {e}")
+            return []
+
+    def delete_memory_link(self, link_id: str) -> bool:
+        """Delete a memory link.
+
+        Args:
+            link_id: Link ID to delete
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Get the link first to update linked_memory_ids
+            link_result = (
+                self.client.table(self.memory_links_table)
+                .select("*")
+                .eq("id", link_id)
+                .execute()
+            )
+
+            if link_result.data:
+                link = link_result.data[0]
+                source_id = link["source_memory_id"]
+                target_id = link["target_memory_id"]
+
+                # Remove from linked_memory_ids arrays
+                self._remove_linked_memory_id(source_id, target_id)
+                self._remove_linked_memory_id(target_id, source_id)
+
+            # Delete the link
+            result = (
+                self.client.table(self.memory_links_table)
+                .delete()
+                .eq("id", link_id)
+                .execute()
+            )
+            return True
+
+        except Exception as e:
+            print(f"Error deleting memory link: {e}")
+            return False
+
+    def _remove_linked_memory_id(self, memory_id: str, linked_id: str):
+        """Remove a linked memory ID from a memory's linked_memory_ids array.
+
+        Args:
+            memory_id: ID of the memory to update
+            linked_id: ID of the memory to unlink
+        """
+        try:
+            # Get current memory to access existing links
+            current_memory = self.get_memory(memory_id)
+            if current_memory:
+                current_links = current_memory.get("linked_memory_ids", [])
+                if linked_id in current_links:
+                    current_links.remove(linked_id)
+
+                    # Update the memory with new links
+                    self.client.table(self.memories_table).update(
+                        {"linked_memory_ids": current_links}
+                    ).eq("id", memory_id).execute()
+
+        except Exception as e:
+            print(f"Error removing linked memory ID: {e}")
+
+    def get_linked_memories(
+        self, memory_id: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get all memories linked to a specific memory.
+
+        Args:
+            memory_id: Memory ID
+            limit: Maximum number of linked memories to return
+
+        Returns:
+            List of linked memories
+        """
+        try:
+            # Get the memory to access its linked_memory_ids
+            memory = self.get_memory(memory_id)
+            if not memory or not memory.get("linked_memory_ids"):
+                return []
+
+            linked_ids = memory["linked_memory_ids"][:limit]
+
+            # Fetch the linked memories
+            linked_memories = []
+            for linked_id in linked_ids:
+                linked_memory = self.get_memory(linked_id)
+                if linked_memory:
+                    linked_memories.append(linked_memory)
+
+            return linked_memories
+
+        except Exception as e:
+            print(f"Error getting linked memories: {e}")
             return []
 
     # =============================================================================

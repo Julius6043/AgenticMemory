@@ -35,7 +35,6 @@ class SupabaseConfigManager:
     # Default configuration values
     DEFAULT_SUPABASE_URL = os.getenv("SUPABASE_URL")
     DEFAULT_SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
-    DEFAULT_SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
     # Table names
     MEMORIES_TABLE = "memories"
@@ -72,9 +71,7 @@ class SupabaseConfigManager:
                 "Get it from your Supabase project settings."
             )
 
-        return SupabaseConfig(
-            url=url, key=key, service_role_key=cls.DEFAULT_SUPABASE_SERVICE_KEY
-        )
+        return SupabaseConfig(url=url, key=key)
 
     @classmethod
     def validate_config(cls) -> bool:

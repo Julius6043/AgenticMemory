@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS memory_links (
     -- Prevent duplicate links
     UNIQUE(source_memory_id, target_memory_id, link_type)
 );
+-- Add linked_memory_ids array to memories table for faster access
+ALTER TABLE memories
+ADD COLUMN IF NOT EXISTS linked_memory_ids UUID [] DEFAULT '{}';
 -- Chat sessions table
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
